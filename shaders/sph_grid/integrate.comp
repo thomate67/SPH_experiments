@@ -1,0 +1,115 @@
+#version 460
+
+layout (local_size_x = 128, local_size_y = 1, local_size_z = 1 ) in;
+
+struct Uniform_grid_params
+{
+    vec4 grid_min;
+    ivec4 cell_count;
+    vec4 cell_size;
+    vec4 grid_pos;
+    int total_cell_count;
+    int cell_capacity;
+    int grid_capacity;
+};
+
+struct Particle {
+    vec4 position;
+    vec4 velocity;
+    vec4 force;
+    float density;
+    float pressure;
+    float pad0;
+    float pad1;
+};
+
+layout(std430, binding = 0) buffer particles
+{
+    Particle sph_particle[];
+};
+
+layout(std430, binding = 1) buffer grid_parameters
+{
+    Uniform_grid_params grid_params;
+};
+
+layout (std430, binding = 2) buffer grid_buffer
+{
+    int grid[];
+};
+
+layout (std430, binding = 3) buffer cell_counter_buffer
+{
+    int cell_counter[];
+};
+
+layout (std430, binding = 4) buffer neighbour_buffer
+{
+    int neighbour[];
+};
+
+layout (std430, binding = 5) buffer neighbour_counter_buffer
+{
+    int neighbour_counter[];
+};
+
+
+// constants
+#define TIME_STEP 0.000001f
+
+uniform float boundWidth;
+uniform float boundHeight;
+uniform float boundDepth;
+uniform float WALL_DAMPING;
+
+void main()
+{
+    uint id = gl_GlobalInvocationID.x;
+
+    if (id >= sph_particle.length())
+    {
+        return;
+    }
+
+    // integrate
+    vec3 acceleration = sph_particle[id].force.xyz / sph_particle[id].density;
+    vec3 new_velocity = sph_particle[id].velocity.xyz + TIME_STEP * acceleration;
+    vec3 new_position = sph_particle[id].position.xyz + TIME_STEP * new_velocity;
+
+    // boundary conditions
+    if (new_position.x < -boundWidth)
+    {
+        new_position.x = -boundWidth;
+        new_velocity.x *= -1 * WALL_DAMPING;
+    }
+    else if(new_position.x > boundWidth)
+    {
+        new_position.x = boundWidth;
+        new_velocity.x *= -1 * WALL_DAMPING;
+    }
+
+    if (new_position.y < -boundHeight)
+    {
+        new_position.y = -boundHeight;
+        new_velocity.y *= -1 * WALL_DAMPING;
+    }
+    else if(new_position.y > boundHeight)
+    {
+        new_position.y = boundHeight;
+        new_velocity.y *= -1 * WALL_DAMPING;
+    }
+
+    if (new_position.z < -boundDepth)
+    {
+        new_position.z = -boundDepth;
+        new_velocity.z *= -1 * WALL_DAMPING;
+    }
+    else if(new_position.z > boundDepth)
+    {
+        new_position.z = boundDepth;
+        new_velocity.z *= -1 * WALL_DAMPING;
+    }
+
+    sph_particle[id].velocity.xyz = new_velocity;
+    sph_particle[id].position.xyz = new_position;
+}

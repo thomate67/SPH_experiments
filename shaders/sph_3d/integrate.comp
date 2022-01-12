@@ -1,0 +1,188 @@
+#version 460
+
+layout (local_size_x = 128, local_size_y = 1, local_size_z = 1 ) in;
+
+layout(std430, binding = 0) buffer positions
+{
+    vec4 position[];
+};
+
+layout(std430, binding = 1) buffer velocities
+{
+    vec4 velocity[];
+};
+
+layout(std430, binding = 2) buffer forces
+{
+    vec4 force[];
+};
+
+layout(std430, binding = 3) buffer densities
+{
+    float density[];
+};
+
+layout(std430, binding = 4) buffer pressures
+{
+    float pressure[];
+};
+
+// constants
+#define TIME_STEP 0.0001f
+
+uniform float boundWidth;
+uniform float boundHeight;
+uniform float boundDepth;
+uniform float WALL_DAMPING;
+uniform float push_left;
+uniform mat4 modelMatrix;
+uniform float collisionSphereRadius;
+uniform vec3 collisionCubeDim;
+uniform int collisionObject;
+
+float sdSphere(vec3 p, float r, mat4 matrix)
+{
+    vec3 invt = vec3((inverse(matrix) * vec4(p, 1)));
+	return length(invt) - r;
+}
+
+vec3 sdSphereGrad(vec3 p, float r, mat4 matrix) {
+	const float EPSILON = 1e-3;
+    vec3 grad = vec3(sdSphere(vec3(p.x + EPSILON, p.y, p.z), r, matrix) - sdSphere(vec3(p.x - EPSILON, p.y, p.z), r, matrix), sdSphere(vec3(p.x, p.y + EPSILON, p.z), r, matrix) - sdSphere(vec3(p.x, p.y - EPSILON, p.z), r, matrix), sdSphere(vec3(p.x, p.y, p.z + EPSILON), r, matrix) - sdSphere(vec3(p.x, p.y, p.z - EPSILON), r, matrix));
+    normalize(grad);
+	return grad;
+}
+
+float sdBox(vec3 p, vec3 b, mat4 matrix)
+{
+	vec3 invt = vec3((inverse(matrix) * vec4(p, 1)));
+	vec3 q = abs(invt) - b;
+	return length(max(q, 0.0f)) + min(max(q.x, max(q.y, q.z)), 0.0f);
+}
+
+vec3 sdBoxGrad(vec3 p, vec3 b, mat4 matrix) {
+	const float EPSILON = 1e-3;
+	return normalize(vec3(
+		sdBox(vec3(p.x + EPSILON, p.y, p.z), b, matrix) - sdBox(vec3(p.x - EPSILON, p.y, p.z), b, matrix),
+		sdBox(vec3(p.x, p.y + EPSILON, p.z), b, matrix) - sdBox(vec3(p.x, p.y - EPSILON, p.z), b, matrix),
+		sdBox(vec3(p.x, p.y, p.z + EPSILON), b, matrix) - sdBox(vec3(p.x, p.y, p.z - EPSILON), b, matrix)
+	));
+}
+
+void collision(vec3 old_pos, uint id, float r, float dt, mat4 matrix)
+{
+    float d1 = sdSphere(old_pos, r, matrix);
+    float d2 = sdSphere(position[id].xyz, r, matrix);
+    vec3 n = sdSphereGrad(position[id].xyz, r, matrix);
+
+    if (d2 < 0 && d1 >= 0) 
+	{
+		vec3 new_pos = vec3(old_pos) + dt * d1 / (d1 - d2) * velocity[id].xyz;
+		position[id].xyz = new_pos;
+		velocity[id].xyz -= 1.99f * dot(velocity[id].xyz, n) * n;
+	}
+	else if (d1 < 0 && d2 < 0) 
+	{
+		if (dot(n, velocity[id].xyz) < 0)
+        {
+            velocity[id].xyz -= 1.99f * dot(velocity[id].xyz, n) * n;
+        }
+        position[id].xyz -= d1 * n;
+	}
+}
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    float test = 0.0f;
+    // integrate
+    vec3 old_pos = position[i].xyz;
+
+    vec3 acceleration = force[i].xyz / density[i];
+    vec3 new_velocity = velocity[i].xyz + TIME_STEP * acceleration;
+    vec3 new_position = position[i].xyz + TIME_STEP * new_velocity;
+
+    // boundary conditions
+    if (new_position.x < -boundWidth + push_left)
+    {
+        new_position.x = -boundWidth + push_left;
+        //new_velocity.x *= -1 * WALL_DAMPING;
+        new_velocity.x *= -1 * push_left + WALL_DAMPING;
+    }
+    else if(new_position.x > boundWidth)
+    {
+        new_position.x = boundWidth;
+        new_velocity.x *= -1 * WALL_DAMPING;
+    }
+
+    if (new_position.y < -boundHeight)
+    {
+        new_position.y = -boundHeight;
+        new_velocity.y *= -1 * WALL_DAMPING;
+    }
+    else if(new_position.y > boundHeight)
+    {
+        new_position.y = boundHeight;
+        new_velocity.y *= -1 * WALL_DAMPING;
+    }
+
+    if (new_position.z < -boundDepth)
+    {
+        new_position.z = -boundDepth;
+        new_velocity.z *= -1 * WALL_DAMPING;
+    }
+    else if(new_position.z > boundDepth)
+    {
+        new_position.z = boundDepth;
+        new_velocity.z *= -1 * WALL_DAMPING;
+    }
+
+    velocity[i].xyz = new_velocity;
+    position[i].xyz = new_position;
+
+    if(collisionObject == 0)
+    {
+        float d1 = sdSphere(old_pos, collisionSphereRadius, modelMatrix);
+        float d2 = sdSphere(position[i].xyz, collisionSphereRadius, modelMatrix);
+        vec3 n = sdSphereGrad(position[i].xyz, collisionSphereRadius, modelMatrix);
+
+        if (d2 < 0 && d1 >= 0) 
+	    {
+	    	vec3 new_pos = vec3(old_pos) + TIME_STEP * d1 / (d1 - d2) * velocity[i].xyz;
+	    	position[i].xyz = new_pos;
+	    	velocity[i].xyz -= 1.99f * dot(velocity[i].xyz, n) * n;
+	    }
+	    else if (d1 < 0 && d2 < 0) 
+	    {
+	    	if (dot(n, velocity[i].xyz) < 0)
+            {
+                velocity[i].xyz -= 1.99f * dot(velocity[i].xyz, n) * n;
+            }
+            position[i].xyz -= d1 * n;
+	    }
+    }
+
+    if(collisionObject == 1)
+    {
+        float d1 = sdBox(old_pos, collisionCubeDim, modelMatrix);
+        float d2 = sdBox(position[i].xyz, collisionCubeDim, modelMatrix);
+        vec3 n = sdBoxGrad(position[i].xyz, collisionCubeDim, modelMatrix);
+
+        if (d2 < 0 && d1 >= 0) 
+	    {
+	    	vec3 new_pos = vec3(old_pos) + TIME_STEP * d1 / (d1 - d2) * velocity[i].xyz;
+	    	position[i].xyz = new_pos;
+	    	velocity[i].xyz -= 1.99f * dot(velocity[i].xyz, n) * n;
+	    }
+	    else if (d1 < 0 && d2 < 0) 
+	    {
+	    	if (dot(n, velocity[i].xyz) < 0)
+            {
+                velocity[i].xyz -= 1.99f * dot(velocity[i].xyz, n) * n;
+            }
+            position[i].xyz -= d1 * n;
+	    }
+    }
+    //collision(old_pos, i, 0.1f, TIME_STEP, modelMatrix);
+    
+}

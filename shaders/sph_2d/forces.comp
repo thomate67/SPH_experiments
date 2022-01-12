@@ -1,0 +1,74 @@
+#version 460
+
+layout (local_size_x = 128, local_size_y = 1, local_size_z = 1 ) in;
+
+layout(std430, binding = 0) buffer positions
+{
+    vec2 position[];
+};
+
+layout(std430, binding = 1) buffer velocities
+{
+    vec2 velocity[];
+};
+
+layout(std430, binding = 2) buffer forces
+{
+    vec2 force[];
+};
+
+layout(std430, binding = 3) buffer densities
+{
+    float density[];
+};
+
+layout(std430, binding = 4) buffer pressures
+{
+    float pressure[];
+};
+
+// constants
+#define PI_FLOAT 3.1415927410125732421875f
+
+// OpenGL y-axis is pointing up, while Vulkan y-axis is pointing down.
+// So in OpenGL this is negative, but in Vulkan this is positive.
+#define GRAVITY_FORCE vec2(0, -9806.65)
+
+// uniform variables
+uniform int NUM_PARTICLES;
+uniform float PARTICLE_MASS;
+uniform float PARTICLE_VISCOSITY;
+uniform float SMOOTHING_LENGTH;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;  
+    // compute all forces
+    vec2 pressure_force = vec2(0, 0);
+    vec2 viscosity_force = vec2(0, 0);
+    
+    for (uint j = 0; j < NUM_PARTICLES; j++)
+    {
+        if (i == j)
+        {
+            continue;
+        }
+        vec2 delta = position[i] - position[j];
+        float r = length(delta);
+        if (r < SMOOTHING_LENGTH)
+        {
+            vec2 spikyKernel = -45.f / (PI_FLOAT * pow(SMOOTHING_LENGTH, 6)) * pow(SMOOTHING_LENGTH - r, 2) * normalize(delta);
+            pressure_force -= PARTICLE_MASS * (pressure[i] + pressure[j]) / (2.f * density[j]) * spikyKernel;
+            // gradient of spiky kernel
+            
+            float viscosityKernel = 45.f / (PI_FLOAT * pow(SMOOTHING_LENGTH, 6)) * (SMOOTHING_LENGTH - r);
+            viscosity_force += PARTICLE_MASS * (velocity[j] - velocity[i]) / density[j] * viscosityKernel;
+            // Laplacian of viscosity kernel
+                
+        }
+    }
+    viscosity_force *= PARTICLE_VISCOSITY;
+    vec2 external_force = density[i] * GRAVITY_FORCE;
+
+    force[i] = pressure_force + viscosity_force + external_force;
+}

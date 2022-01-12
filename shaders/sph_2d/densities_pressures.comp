@@ -1,0 +1,59 @@
+#version 460
+
+layout (local_size_x = 128, local_size_y = 1, local_size_z = 1 ) in;
+
+layout(std430, binding = 0) buffer positions
+{
+    vec2 position[];
+};
+
+layout(std430, binding = 1) buffer velocities
+{
+    vec2 velocity[];
+};
+
+layout(std430, binding = 2) buffer forces
+{
+    vec2 force[];
+};
+
+layout(std430, binding = 3) buffer densities
+{
+    float density[];
+};
+
+layout(std430, binding = 4) buffer pressures
+{
+    float pressure[];
+};
+
+// constants
+#define PI_FLOAT 3.1415927410125732421875f
+
+// uniform variables
+uniform int NUM_PARTICLES;
+uniform float RESTING_DENSITY;
+uniform float PARTICLE_MASS;
+uniform float PARTICLE_STIFFNESS;
+uniform float SMOOTHING_LENGTH;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    
+    // compute density
+    float density_sum = 0.f;
+    for (int j = 0; j < NUM_PARTICLES; j++)
+    {
+        vec2 delta = position[i] - position[j];
+        float r = length(delta);
+        if (r < SMOOTHING_LENGTH)
+        {
+            float poly6Kernel = 315.f * pow(SMOOTHING_LENGTH * SMOOTHING_LENGTH - r * r, 3) / (64.f * PI_FLOAT * pow(SMOOTHING_LENGTH, 9));
+            density_sum += PARTICLE_MASS * poly6Kernel;
+        }
+    }
+    density[i] = density_sum;
+    // compute pressure
+    pressure[i] = max(PARTICLE_STIFFNESS * (density_sum - RESTING_DENSITY), 0.f);
+}

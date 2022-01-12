@@ -1,0 +1,82 @@
+#version 460
+
+layout (local_size_x = 128, local_size_y = 1, local_size_z = 1 ) in;
+
+struct Uniform_grid_params
+{
+    vec4 grid_min;
+    ivec4 cell_count;
+    vec4 cell_size;
+    vec4 grid_pos;
+    int total_cell_count;
+    int cell_capacity;
+    int grid_capacity;
+};
+
+struct Particle {
+    vec4 position;
+    vec4 velocity;
+    vec4 force;
+    float density;
+    float pressure;
+    float pad0;
+    float pad1;
+};
+
+layout(std430, binding = 0) buffer particles
+{
+    Particle sph_particle[];
+};
+
+layout(std430, binding = 1) buffer grid_parameters
+{
+    Uniform_grid_params grid_params;
+};
+
+layout (std430, binding = 2) buffer grid_buffer
+{
+    int grid[];
+};
+
+layout (std430, binding = 3) buffer cell_counter_buffer
+{
+    int cell_counter[];
+};
+
+layout (std430, binding = 4) buffer neighbour_buffer
+{
+    int neighbour[];
+};
+
+layout (std430, binding = 5) buffer neighbour_counter_buffer
+{
+    int neighbour_counter[];
+};
+
+
+void main() 
+{
+    uint id = gl_GlobalInvocationID.x;
+
+    if (id >= sph_particle.length())
+    {
+        return;
+    }
+
+    vec4 pos = sph_particle[id].position;
+    int i = int((pos.x - grid_params.grid_min.x) / grid_params.cell_size.x);
+    int j = int((pos.y - grid_params.grid_min.y) / grid_params.cell_size.y);
+    int k = int((pos.z - grid_params.grid_min.z) / grid_params.cell_size.z);
+    int cell_index = i * grid_params.cell_count.y * grid_params.cell_count.z
+                     + j * grid_params.cell_count.z + k;
+
+    if (cell_index < grid_params.total_cell_count) 
+    {
+        int particles_in_cell = atomicAdd(cell_counter[cell_index], 1);
+        int grid_index = cell_index * grid_params.cell_capacity + particles_in_cell;
+        if (grid_index < grid_params.grid_capacity) 
+        {
+            grid[grid_index] = int(id);
+        }
+    }
+}
